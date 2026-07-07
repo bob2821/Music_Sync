@@ -15,7 +15,36 @@
  * from a user gesture (click/tap), per browser autoplay policy.
  */
 
-import type { SoundMode } from '../utils/notes';
+import type { ScaleName, SoundMode } from '../utils/notes';
+
+// Semitone offset for the "third" layered quietly above each played note,
+// per scale — this is what actually makes Major vs Minor audible rather than
+// just a label: Major gets a bright major-third+fifth voicing under every
+// note, Minor gets a darker minor-third+fifth voicing. Chromatic is left out
+// so free chromatic runs stay clean/atonal rather than fighting a fixed
+// harmony underneath.
+const SCALE_THIRD_SEMITONES: Partial<Record<ScaleName, number>> = {
+  Major: 4,
+  Minor: 3,
+  Pentatonic: 4,
+  Indian: 4,
+};
+const HARMONY_THIRD_GAIN = 0.32;
+const HARMONY_FIFTH_GAIN = 0.22;
+
+// Major/Minor also drives the SHARED lowpass filter brightness, so switching
+// is an instant, unmistakable timbral shift that affects every currently
+// sustaining note too (not just newly-triggered ones) — Major opens up
+// bright and open, Minor closes down darker/warmer. This is what actually
+// makes the two feel different even before you consciously notice the
+// underlying chord, since the harmony layer above is comparatively subtle.
+const SCALE_BRIGHTNESS: Partial<Record<ScaleName, number>> = {
+  Major: 0.82,
+  Minor: 0.3,
+  Pentatonic: 0.62,
+  Indian: 0.5,
+  Chromatic: 0.62,
+};
 
 interface OscillatorLayer {
   type: OscillatorType;
@@ -110,6 +139,7 @@ export class AudioEngine {
 
   private voices = new Map<string, Voice>();
   private waveMode: SoundMode = 'Ambient Pad';
+  private scale: ScaleName = 'Major';
   private ready = false;
 
   get isReady() {
@@ -198,6 +228,19 @@ export class AudioEngine {
 
   setWaveMode(mode: SoundMode) {
     this.waveMode = mode;
+  }
+
+  /**
+   * Notes played after this call will be harmonized for the new scale, and
+   * the shared filter brightens/darkens immediately so the switch is heard
+   * right away on whatever is already sustaining, too.
+   */
+  setScale(scale: ScaleName) {
+    this.scale = scale;
+    const brightness = SCALE_BRIGHTNESS[scale];
+    if (brightness !== undefined) {
+      this.setFilterCutoff(brightness);
+    }
   }
 
   setMasterVolume(value: number) {
@@ -305,6 +348,31 @@ export class AudioEngine {
       osc.start(now);
       oscillators.push(osc);
       layerGains.push(layerGain);
+    }
+
+    // ---- Scale-aware harmonization: quietly layer a third + fifth above the
+    // fundamental so Major/Minor is something you actually HEAR, not just a
+    // UI label. Major gets a bright major-third voicing, Minor a darker
+    // minor-third voicing; both add a perfect fifth for body.
+    const thirdSemitones = SCALE_THIRD_SEMITONES[this.scale];
+    if (thirdSemitones !== undefined) {
+      const harmonyIntervals: { semitones: number; gain: number }[] = [
+        { semitones: thirdSemitones, gain: HARMONY_THIRD_GAIN },
+        { semitones: 7, gain: HARMONY_FIFTH_GAIN },
+      ];
+      for (const h of harmonyIntervals) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = frequency * Math.pow(2, h.semitones / 12);
+
+        const layerGain = ctx.createGain();
+        layerGain.gain.setValueAtTime(h.gain, now);
+
+        osc.connect(layerGain).connect(voiceGain);
+        osc.start(now);
+        oscillators.push(osc);
+        layerGains.push(layerGain);
+      }
     }
 
     let lfo: OscillatorNode | undefined;

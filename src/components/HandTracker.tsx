@@ -4,8 +4,14 @@
  * Wraps MediaPipe Tasks Vision's HandLandmarker in VIDEO/live-stream mode.
  * Renders nothing — it's a side-effect-only driver that runs a
  * requestAnimationFrame loop, calling `onResult` every frame with the
- * fingertip / thumb / wrist positions already corrected for the mirrored
- * camera preview.
+ * fingertip / thumb / wrist positions (per detected hand) already corrected
+ * for the mirrored camera preview.
+ *
+ * Supports up to two simultaneous hands. Rather than trusting MediaPipe's
+ * mirror-sensitive "handedness" label, the caller assigns left/right roles by
+ * comparing each hand's on-screen (mirror-corrected) x position — whichever
+ * appears on the left of the screen is "the left hand", matching what the
+ * user actually sees, regardless of any handedness/mirroring ambiguity.
  *
  * High-frequency data (landmark positions) is NEVER put into React state —
  * it's handed to the caller via a callback so the caller can store it in a
@@ -29,7 +35,7 @@ interface HandTrackerProps {
   video: HTMLVideoElement | null;
   active: boolean;
   numHands?: number;
-  onResult: (result: HandFrameResult | null, timestampMs: number) => void;
+  onResult: (hands: HandFrameResult[], timestampMs: number) => void;
   onModelStatus?: (status: 'loading' | 'ready' | 'error') => void;
 }
 
@@ -68,7 +74,7 @@ function detectOpenPalm(lm: { x: number; y: number }[]): boolean {
   return extendedCount >= 3;
 }
 
-export function HandTracker({ video, active, numHands = 1, onResult, onModelStatus }: HandTrackerProps) {
+export function HandTracker({ video, active, numHands = 2, onResult, onModelStatus }: HandTrackerProps) {
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef(-1);
@@ -86,9 +92,13 @@ export function HandTracker({ video, active, numHands = 1, onResult, onModelStat
           baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
           runningMode: 'VIDEO',
           numHands,
-          minHandDetectionConfidence: 0.6,
-          minHandPresenceConfidence: 0.6,
-          minTrackingConfidence: 0.6,
+          // Raised from 0.6: fewer false/"ghost" hand detections and steadier
+          // per-hand tracking, at the cost of a touch more latency before a
+          // hand is first recognized — worth it to kill jitter and role-swap
+          // glitches, especially when only one hand is in frame.
+          minHandDetectionConfidence: 0.72,
+          minHandPresenceConfidence: 0.72,
+          minTrackingConfidence: 0.72,
         });
         if (disposedRef.current) {
           landmarker.close();
@@ -122,8 +132,7 @@ export function HandTracker({ video, active, numHands = 1, onResult, onModelStat
           lastVideoTimeRef.current = video.currentTime;
           try {
             const result = landmarker.detectForVideo(video, now);
-            if (result.landmarks && result.landmarks.length > 0) {
-              const lm = result.landmarks[0];
+            const hands: HandFrameResult[] = (result.landmarks ?? []).map((lm, i) => {
               // Mirror-correct: the source video frame is unmirrored, but we
               // display it flipped (CSS scaleX(-1)) for a natural selfie feel.
               const mirror = (p: { x: number; y: number }) => ({ x: 1 - p.x, y: p.y });
@@ -138,16 +147,15 @@ export function HandTracker({ video, active, numHands = 1, onResult, onModelStat
                 lm[IDX_INDEX_TIP].y,
               );
               const isOpenPalm = detectOpenPalm(lm);
-              const handedness = result.handedness?.[0]?.[0]?.categoryName ?? 'Unknown';
+              const handedness = result.handedness?.[i]?.[0]?.categoryName ?? 'Unknown';
 
-              onResult({ indexTip, thumbTip, wrist, pinchDistance, isOpenPalm, handedness }, now);
-            } else {
-              onResult(null, now);
-            }
+              return { indexTip, thumbTip, wrist, pinchDistance, isOpenPalm, handedness };
+            });
+            onResult(hands, now);
           } catch (err) {
             // Landmarks can be transiently unavailable — never crash the loop.
             console.warn('detectForVideo failed', err);
-            onResult(null, now);
+            onResult([], now);
           }
         }
       }

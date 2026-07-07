@@ -1,29 +1,27 @@
 /**
  * RadialNoteController.tsx
  * ---------------------------------------------------------------------------
- * The note controller: chromatic note bubbles (or a scale subset highlighted)
- * arranged along a single, gently curved line across the lower part of the
- * screen — easier to sweep a fingertip across than a full circle. Reports its
- * own screen-space bubble layout to the parent via `onLayout` whenever the
- * viewport or note list changes, so the parent's per-frame collision loop can
- * compare the fingertip position against real pixel coordinates.
+ * The note wheel: all 12 chromatic note bubbles arranged evenly around a
+ * circle anchored to the left side of the screen (the left hand plays this
+ * wheel; the right hand controls the Major/Minor slider on the right — see
+ * ScaleSlider.tsx). Reports its own screen-space bubble layout to the parent
+ * via `onLayout` whenever the viewport or note list changes, so the parent's
+ * per-frame collision loop can compare the fingertip position against real
+ * pixel coordinates.
  *
- * Bubble size and spacing are computed together (not fixed constants) so
- * that, at any viewport width and any note count (5-12 depending on scale),
- * bubbles are always evenly spaced with a guaranteed minimum gap and never
- * visually overlap. The reported hit-test `radius` always matches what's
- * actually drawn on screen, so hover feels precise instead of "off".
+ * Bubble size is computed from the ring's circumference so that, at any
+ * viewport size, all 12 bubbles stay evenly spaced with a guaranteed minimum
+ * gap and never visually overlap. The reported hit-test `radius` always
+ * matches what's actually drawn on screen, so hover feels precise instead of
+ * "off".
  *
  * Visual state (idle/hover/active/locked) is driven by props that the parent
  * only updates when a note's state actually *changes* — not every frame —
  * so re-renders here stay infrequent even though hand tracking runs at 60fps.
- *
- * (Component/prop names kept as "RadialNoteController"/"NoteBubbleLayout" for
- * compatibility with the rest of the app, even though the layout is now a
- * gently bowed line rather than a circle.)
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { polarToCartesian } from '../utils/math';
 import type { NoteDefinition } from '../utils/notes';
 
 export interface NoteBubbleLayout {
@@ -45,63 +43,49 @@ interface RadialNoteControllerProps {
   onLayout: (bubbles: NoteBubbleLayout[]) => void;
 }
 
-const MAX_DIAMETER = 84;
-const MIN_DIAMETER = 50;
-const MIN_GAP = 16; // guaranteed empty space between adjacent bubble edges
-// How much the line bows upward in the middle. 0 = perfectly straight line.
-const CURVE_HEIGHT = 40;
+const MAX_DIAMETER = 78;
+const MIN_DIAMETER = 46;
+const MIN_GAP = 14; // guaranteed empty space between adjacent bubble edges
 
-interface LineLayout {
-  baselineY: number;
-  startX: number;
-  totalWidth: number;
-  diameter: number;
+interface CircleLayout {
+  cx: number;
+  cy: number;
+  radius: number;
+  diameter: number; // bubble diameter
 }
 
-/** Position of the i-th of `count` bubbles along the gently curved line. */
-function bubblePosition(layout: LineLayout, i: number, count: number) {
-  const t = count > 1 ? i / (count - 1) : 0.5;
-  const x = layout.startX + layout.totalWidth * t;
-  // A shallow arc (sine bow) peaking at the center — a "little curved
-  // straight line" rather than a full circle.
-  const y = layout.baselineY - CURVE_HEIGHT * Math.sin(Math.PI * t);
-  return { x, y };
+/** Position of the i-th of `count` bubbles evenly spaced around the ring. */
+function bubblePosition(layout: CircleLayout, i: number, count: number) {
+  const angle = (360 / Math.max(count, 1)) * i;
+  return polarToCartesian(layout.cx, layout.cy, layout.radius, angle);
 }
 
 /**
- * Computes a line layout (position + bubble size) that always keeps bubbles
- * evenly spaced with at least MIN_GAP between edges, regardless of viewport
- * width or how many notes are shown.
+ * Computes the wheel's screen position/size, anchored to the left side of
+ * the viewport, clear of the top HUD and bottom control panels. Bubble
+ * diameter adapts to the ring's circumference so `count` bubbles never
+ * overlap.
  */
-function computeLayout(vw: number, vh: number, count: number): LineLayout {
-  const baseTotalWidth = Math.min(vw * 0.86, 1180);
-  const safeCount = Math.max(count, 1);
+function computeLayout(vw: number, vh: number, count: number): CircleLayout {
+  const cx = Math.min(vw * 0.4, 520);
+  const cy = vh * 0.52;
+  const radius = Math.max(115, Math.min(vw * 0.18, vh * 0.27, 195));
 
-  // Width needed to fit `count` bubbles at the minimum readable size.
-  const minRequiredWidth = safeCount > 1 ? (safeCount - 1) * (MIN_DIAMETER + MIN_GAP) : MIN_DIAMETER;
-  const totalWidth = Math.min(Math.max(baseTotalWidth, minRequiredWidth), vw * 0.96);
+  const circumference = 2 * Math.PI * radius;
+  const arcSpacing = circumference / Math.max(count, 1);
+  const diameter = Math.min(MAX_DIAMETER, Math.max(MIN_DIAMETER, arcSpacing - MIN_GAP));
 
-  const spacing = safeCount > 1 ? totalWidth / (safeCount - 1) : totalWidth;
-  const diameter = Math.min(MAX_DIAMETER, Math.max(MIN_DIAMETER, spacing - MIN_GAP));
-
-  return {
-    // Kept well clear of the bottom-left/bottom-right control panels so the
-    // note bubbles never overlap them, even on shorter viewports.
-    baselineY: vh - Math.min(vh * 0.3, 250),
-    startX: (vw - totalWidth) / 2,
-    totalWidth,
-    diameter,
-  };
+  return { cx, cy, radius, diameter };
 }
 
 export function RadialNoteController({ notes, visualStates, rippleSignal, onLayout }: RadialNoteControllerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [layout, setLayout] = useState<LineLayout | null>(null);
+  const [layout, setLayout] = useState<CircleLayout | null>(null);
 
   const count = notes.length;
 
-  // Recompute the line's position/width/bubble-size on mount, on resize, and
-  // whenever the number of visible notes changes (e.g. switching scales).
+  // Recompute the wheel's position/size on mount, on resize, and whenever the
+  // number of notes changes.
   useLayoutEffect(() => {
     function recompute() {
       setLayout(computeLayout(window.innerWidth, window.innerHeight, count));
@@ -133,19 +117,28 @@ export function RadialNoteController({ notes, visualStates, rippleSignal, onLayo
 
   if (!layout) return null;
 
-  const scale = layout.diameter / MAX_DIAMETER;
-  const nameFontSize = 0.78 + 0.32 * scale; // rem
-  const sargamFontSize = 0.5 + 0.22 * scale; // rem
+  const scaleFactor = layout.diameter / MAX_DIAMETER;
+  const nameFontSize = 0.72 + 0.32 * scaleFactor; // rem
+  const sargamFontSize = 0.46 + 0.22 * scaleFactor; // rem
 
   return (
     <div ref={containerRef} className="radial-controller" aria-hidden="true">
       <div
-        className="radial-controller-line-glow"
+        className="note-wheel-glow"
         style={{
-          left: layout.startX - layout.diameter / 2,
-          top: layout.baselineY - CURVE_HEIGHT - layout.diameter / 2,
-          width: layout.totalWidth + layout.diameter,
-          height: CURVE_HEIGHT * 2 + layout.diameter,
+          left: layout.cx,
+          top: layout.cy,
+          width: (layout.radius + layout.diameter / 2) * 2,
+          height: (layout.radius + layout.diameter / 2) * 2,
+        }}
+      />
+      <div
+        className="note-wheel-ring"
+        style={{
+          left: layout.cx,
+          top: layout.cy,
+          width: layout.radius * 2,
+          height: layout.radius * 2,
         }}
       />
       {notes.map((note, i) => {

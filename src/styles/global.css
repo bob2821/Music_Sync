@@ -168,7 +168,7 @@ html, body, #root {
   opacity: 0.7;
 }
 
-/* ---- Note controller: gently curved line -------------------------------- */
+/* ---- Note controller: circular wheel (left hand) ------------------------ */
 
 .radial-controller {
   position: absolute;
@@ -177,12 +177,24 @@ html, body, #root {
   pointer-events: none;
 }
 
-.radial-controller-line-glow {
+.note-wheel-glow {
   position: absolute;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 77, 94, 0.05), rgba(161, 91, 255, 0.08), rgba(255, 77, 94, 0.05));
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 77, 94, 0.08), rgba(161, 91, 255, 0.06) 70%, transparent 85%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 0 60px 10px rgba(255, 77, 94, 0.04) inset;
+}
+
+/* The actual ring the note bubbles sit on — a crisp, always-visible stroke
+   so the wheel reads as a clear shape rather than just a faint glow. */
+.note-wheel-ring {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid rgba(255, 77, 94, 0.4);
+  box-shadow: 0 0 24px 2px rgba(255, 77, 94, 0.18), inset 0 0 24px 2px rgba(255, 77, 94, 0.06);
+  pointer-events: none;
 }
 
 .note-bubble {
@@ -196,29 +208,31 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  /* Glass finish: translucent fill + heavy blur + a soft inner highlight
-     edge to sell the "frosted glass" look. */
-  background: rgba(255, 255, 255, 0.055);
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  /* Glass finish: translucent fill + heavy blur + a solid, clearly-visible
+     border to sell the "frosted glass" look without looking washed out. */
+  background: rgba(255, 255, 255, 0.1);
+  border: 2.5px solid rgba(255, 255, 255, 0.34);
   backdrop-filter: blur(18px) saturate(180%);
   -webkit-backdrop-filter: blur(18px) saturate(180%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -8px 16px -8px rgba(0, 0, 0, 0.3);
-  color: var(--text-secondary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -8px 16px -8px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
   transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.16s ease-out, border-color 0.16s ease-out, opacity 0.16s ease-out, background 0.16s ease-out, width 0.2s ease, height 0.2s ease;
-  opacity: 0.55;
+  opacity: 0.82;
   will-change: transform;
 }
 
 .note-bubble-name {
-  font-size: 1.05rem;
-  font-weight: 600;
+  font-size: 1.1rem;
+  font-weight: 700;
   letter-spacing: 0.02em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 .note-bubble-sargam {
-  font-size: 0.68rem;
+  font-size: 0.7rem;
+  font-weight: 600;
   color: var(--text-secondary);
-  opacity: 0.8;
+  opacity: 0.95;
 }
 
 .note-bubble--dimmed {
@@ -226,11 +240,11 @@ html, body, #root {
 }
 
 .note-bubble--hover {
-  opacity: 0.92;
+  opacity: 0.96;
   transform: translate(-50%, -50%) scale(1.12);
-  background: rgba(255, 77, 94, 0.1);
-  border-color: rgba(255, 77, 94, 0.55);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 24px 4px rgba(255, 77, 94, 0.3);
+  background: rgba(255, 77, 94, 0.14);
+  border-color: rgba(255, 77, 94, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 24px 4px rgba(255, 77, 94, 0.35);
 }
 
 .note-bubble--active {
@@ -238,7 +252,8 @@ html, body, #root {
   color: var(--text-primary);
   transform: translate(-50%, -50%) scale(1.22);
   border-color: var(--accent-red);
-  background: rgba(255, 77, 94, 0.18);
+  border-width: 3px;
+  background: rgba(255, 77, 94, 0.22);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 40px 10px rgba(255, 77, 94, 0.55), 0 0 80px 20px rgba(255, 45, 85, 0.28);
   animation: pulse-glow 1.2s ease-in-out infinite;
 }
@@ -246,8 +261,8 @@ html, body, #root {
 .note-bubble--locked {
   opacity: 1;
   color: var(--text-primary);
-  border: 2px dashed var(--accent-red-deep);
-  background: rgba(255, 45, 85, 0.12);
+  border: 3px dashed var(--accent-red-deep);
+  background: rgba(255, 45, 85, 0.16);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 30px 6px rgba(255, 45, 85, 0.5);
   animation: orbit-spin 6s linear infinite;
 }
@@ -439,6 +454,63 @@ html, body, #root {
   height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
+}
+
+/* ---- Scale slider: right-hand Major/Minor control ------------------------ */
+
+.scale-slider {
+  position: absolute;
+  right: 390px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 14px;
+  pointer-events: none;
+}
+
+.scale-slider-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+
+.scale-slider-label--active {
+  color: var(--accent-red);
+  text-shadow: 0 0 12px rgba(255, 77, 94, 0.6);
+}
+
+.scale-slider-track {
+  position: relative;
+  width: 8px;
+  height: min(46vh, 340px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.scale-slider-handle {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid var(--accent-red);
+  box-shadow: 0 0 14px 3px rgba(255, 77, 94, 0.5);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.scale-slider-handle--live {
+  background: var(--accent-red);
+  box-shadow: 0 0 22px 6px rgba(255, 77, 94, 0.75);
 }
 
 /* ---- Glass panels & controls -------------------------------------------- */
